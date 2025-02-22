@@ -79,7 +79,11 @@ class IGHCi(Kernel):
             self._send_output("stderr", "Changing GHCi prompts is not allowed.")
             return 'error'
         try:
-            output         = self.ghci.run_command(cmd)     
+            output         = self.ghci.run_command(cmd)
+
+            if not output: 
+                return 'ok'
+            
             is_error, text = self._process_output(output)
         
             stream = 'stderr' if is_error else 'stdout'
