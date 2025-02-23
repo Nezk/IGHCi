@@ -69,15 +69,6 @@ class IGHCi(Kernel):
         self.send_response(self.iopub_socket, 'stream', {'name': stream, 'text': text})
     
     def _execute_command(self, cmd): 
-        is_prompt_change_command = any(
-            self._prompt_regex.search(line)
-            for line in map(str.strip, cmd.splitlines())
-            if line.startswith(':set')
-        )
-
-        if is_prompt_change_command:
-            self._send_output("stderr", "Changing GHCi prompts is not allowed.")
-            return 'error'
         try:
             output = self.ghci.run_command(cmd)
 
