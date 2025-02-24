@@ -173,7 +173,7 @@ class IGHCi(Kernel):
                 self.send_response(self.iopub_socket, 
                                    'stream', 
                                    {'name': "stderr",
-                                    'text': msg)
+                                    'text': msg})
                 return 'error'
         return None
     
