@@ -23,7 +23,7 @@ class IGHCi(Kernel):
 
     def _start_ghci(self):
         self.ghci = REPLWrapper(
-            "ghci",
+            "ghci -fdiagnostics-as-json",
             orig_prompt = r"ghci> ",
             prompt_change = None,
             continuation_prompt = "ghci| ",
@@ -53,51 +53,73 @@ class IGHCi(Kernel):
         ]
 
     _ansi_escape = re.compile(r'\x1b\[([0-9;]*)([A-Za-z])')
-    _error_regex = re.compile(
-        r'^\s*<interactive>:\d+:\d+:\s+error:|unrecognised flag:.*|unknown command.*',
-        re.MULTILINE | re.IGNORECASE
-    )
+    _error_regex = re.compile(r'(?xs)'
+                              r'^\s*\{'
+                              r'(?=.*["\']severity["\']\s*:\s*["\']Error["\'])'
+                              r'.*\}\s*$'
+                             )
     
     def _process_output(self, output):
         clean    = self._ansi_escape.sub('', output)
         is_error = bool(self._error_regex.search(clean))
-        text     = output.strip() if is_error else output
-        return is_error, text
 
-    # Function renaming?
-    def _send_output(self, stream, text):
-        self.send_response(self.iopub_socket, 'stream', {'name': stream, 'text': text})
-    
+        stripped = output.strip()
+        is_html  = stripped.startswith('<html>') and stripped.endswith('</html>') and not is_error
+
+        if is_error:
+            processed_text = stripped 
+        if is_html:
+            html_content   = stripped[len('<html>'):-len('</html>')]
+            processed_text = html_content.strip()
+        else:
+            processed_text = output
+
+        return is_error, is_html, processed_text
+
     def _execute_command(self, cmd): 
         try:
             output = self.ghci.run_command(cmd)
 
             if not output: 
                 return 'ok'
-            
-            is_error, text = self._process_output(output)
-        
-            stream = 'stderr' if is_error else 'stdout'
-            status = 'error' if is_error else 'ok'
-            
-            self._send_output(stream, text)
+
+            is_error, is_html, text = self._process_output(output)
+
+            if is_html:
+                self.send_response(
+                    self.iopub_socket,
+                    'display_data',
+                    {
+                        'data': {'text/html': text},
+                        'metadata': {}
+                    }
+                )
+                # Guaranteed by `… and not is_error`
+                status = 'ok'
+            else:
+                stream = 'stderr' if is_error else 'stdout'
+                status = 'error'  if is_error else 'ok'
+                self.send_response(self.iopub_socket, 
+                                   'stream', 
+                                   {'name': stream,
+                                    'text': text})
             return status
         except KeyboardInterrupt:
-            # TODO: handling large outputs after interruption,
-            # like factorial of 65000
             self.ghci.child.sendintr()
             output_intr = self.ghci.child.before
-            self._send_output("stderr", f"Interrupted:\n{output_intr}")            
+            self.send_response(self.iopub_socket, 
+                               'stream', 
+                               {'name': "stderr",
+                                'text': f"Interrupted:\n{output_intr}"})
             return 'abort'
         except Exception as e:
             self.log.error(str(e))
-            self._send_output("stderr", str(e))
+            self.send_response(self.iopub_socket, 
+                               'stream', 
+                               {'name': "stderr",
+                                'text': f"{str(e)}"})
             return 'error'
 
-        return self._process_output(output)
-
-    # TODO: Better regexps I guess?
-    # v_promptXYZ = 42 => error
     _prompt_regex = re.compile(r'(prompt|prompt-cont)')
     _stdin_regex  = re.compile(r'(getChar|getLine|getContents|interact)')
 
