@@ -1,4 +1,5 @@
 import re
+import json
 
 from itertools            import groupby
 from functools            import reduce
@@ -61,21 +62,53 @@ class IGHCi(Kernel):
 
     
     def _process_output(self, output):
-        is_error = bool(self._error_regex.search(output) or self._exception_regex.search(output))
+
+        def pformat_error(error):
+            message = '\n'.join(error.get('message', []))
+            span = error.get('span', None)
+            
+            if span:
+                file = span.get('file', '<unknown file>')
+                
+                start = span.get('start', {})
+                end   = span.get('end', {})
+                
+                start_line   = start.get('line', '?')
+                start_column = start.get('column', '?')
+                
+                end_line   = end.get('line', '?')
+                end_column = end.get('column', '?')
+                
+                span_info = f"{file} {start_line}:{start_column}—{end_line}:{end_column}\n\n"
+            else:
+                span_info = ''
+                
+            formatted_output = f"{span_info}{message}"
+            
+            return formatted_output
+        
+        is_error     = bool(self._error_regex.search(output))
+        is_exception = bool(self._exception_regex.search(output))
 
         stripped = output.strip()
-        is_html  = stripped.startswith('<html>') and stripped.endswith('</html>') and not is_error
+        is_html  = not (is_error or is_exception) and stripped.startswith('<html>') and stripped.endswith('</html>')
 
         if is_error:
-            # But exceptions are not stripped for some reason
-            processed_text = stripped 
+            errors    = [json.loads(error) for error in output.split("\r\n") if error]
+            pp_errors = [pformat_error(error) for error in errors]
+            
+            processed_text = "\n\n".join(pp_errors)
+        if is_exception:
+            processed_text = stripped
         if is_html:
             html_content   = stripped[len('<html>'):-len('</html>')]
             processed_text = html_content.strip()
-        else:
+        if not (is_error or is_exception or is_html):
             processed_text = output
 
-        return is_error, is_html, processed_text
+        is_to_stderr = is_error or is_exception
+        
+        return is_to_stderr, is_html, processed_text
 
     def _execute_command(self, cmd): 
         try:
@@ -84,8 +117,8 @@ class IGHCi(Kernel):
             if not output: 
                 return 'ok'
 
-            is_error, is_html, text = self._process_output(output)
-
+            is_to_stderr, is_html, text = self._process_output(output)
+            
             if is_html:
                 self.send_response(
                     self.iopub_socket,
@@ -95,11 +128,11 @@ class IGHCi(Kernel):
                         'metadata': {}
                     }
                 )
-                # Guaranteed by `… and not is_error`
+                # Guaranteed by `not (is_error or is_exception) …`
                 status = 'ok'
             else:
-                stream = 'stderr' if is_error else 'stdout'
-                status = 'error'  if is_error else 'ok'
+                stream = 'stderr' if is_to_stderr else 'stdout'
+                status = 'error'  if is_to_stderr else 'ok'
                 self.send_response(self.iopub_socket, 
                                    'stream', 
                                    {'name': stream,
