@@ -165,12 +165,15 @@ class IGHCi(Kernel):
             (self._stdin_regex, "Functions dealing with stdin are not currently supported."),
             (self._prompt_regex, "Changing GHCi prompts is not allowed.")
         ]
-        
+
         matchings = [message for regex, message in rules if re.findall(regex, code)]
 
         if matchings:
             for msg in matchings:
-                self._send_output('stderr', msg)
+                self.send_response(self.iopub_socket, 
+                               'stream', 
+                               {'name': "stderr",
+                                'text': msg)
                 return 'error'
         return None
     
