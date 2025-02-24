@@ -52,21 +52,22 @@ class IGHCi(Kernel):
             for item in (list(group) if is_cmd else process_non_commands(list(group)))
         ]
 
-    _ansi_escape = re.compile(r'\x1b\[([0-9;]*)([A-Za-z])')
     _error_regex = re.compile(r'(?xs)'
                               r'^\s*\{'
                               r'(?=.*["\']severity["\']\s*:\s*["\']Error["\'])'
                               r'.*\}\s*$'
                              )
+    _exception_regex = re.compile(r'\*\*\* Exception:')
+
     
     def _process_output(self, output):
-        clean    = self._ansi_escape.sub('', output)
-        is_error = bool(self._error_regex.search(clean))
+        is_error = bool(self._error_regex.search(output) or self._exception_regex.search(output))
 
         stripped = output.strip()
         is_html  = stripped.startswith('<html>') and stripped.endswith('</html>') and not is_error
 
         if is_error:
+            # But exceptions are not stripped for some reason
             processed_text = stripped 
         if is_html:
             html_content   = stripped[len('<html>'):-len('</html>')]
