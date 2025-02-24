@@ -171,9 +171,9 @@ class IGHCi(Kernel):
         if matchings:
             for msg in matchings:
                 self.send_response(self.iopub_socket, 
-                               'stream', 
-                               {'name': "stderr",
-                                'text': msg)
+                                   'stream', 
+                                   {'name': "stderr",
+                                    'text': msg)
                 return 'error'
         return None
     
