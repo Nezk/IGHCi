@@ -31,11 +31,9 @@ class IGHCi(Kernel):
         )
         
     def _process_code(self, code):
-        # TOOD: removing comments between blocks of code?
         is_ghci_command = lambda line: line.strip().startswith(':')
         wrap_block      = lambda lines: ":{\n" + "\n".join(lines) + "\n:}"
-        remove_markers  = lambda line: "" if line in {":{", ":}"} else line.replace(":{", "").replace(":}", "")
-    
+            
         process_non_commands = lambda lines: [
             wrap_block(block) if len(block) > 1 else block[0]
             for block in (
@@ -44,10 +42,14 @@ class IGHCi(Kernel):
                 if is_nonempty
             )
         ]
-    
-        lines  = map(remove_markers, code.splitlines())
-        groups = groupby(lines, key = is_ghci_command)
         
+        wo_ml_comments = re.sub(r'\{-(.*?)\-\}', '', code, flags = re.DOTALL)
+        wo_sl_comments = re.sub(r'--.*', '', wo_ml_comments)
+        wo_bl          = re.sub(r'^\s*:(?:\{|\})\s*$', '', wo_sl_comments, flags = re.MULTILINE)
+    
+        lines = wo_bl.splitlines()
+        groups = groupby(lines, key = is_ghci_command)
+            
         return [
             item
             for is_cmd, group in groups
@@ -133,7 +135,7 @@ class IGHCi(Kernel):
                 return 'ok'
 
             is_ok, is_to_stderr, is_html, text = self._process_output(output)
-            
+
             if is_html:
                 # TODO: Figure out how mixed output works, 
                 # i.e. how Jupyter works when one cell outputs both text (stdout) and HTML in one cell
