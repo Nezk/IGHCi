@@ -31,6 +31,7 @@ class IGHCi(Kernel):
         )
         
     def _process_code(self, code):
+        # TOOD: removing comments between blocks of code?
         is_ghci_command = lambda line: line.strip().startswith(':')
         wrap_block      = lambda lines: ":{\n" + "\n".join(lines) + "\n:}"
         remove_markers  = lambda line: "" if line in {":{", ":}"} else line.replace(":{", "").replace(":}", "")
@@ -58,12 +59,24 @@ class IGHCi(Kernel):
                               r'(?=.*["\']severity["\']\s*:\s*["\']Error["\'])'
                               r'.*\}\s*$'
                              )
+    _warning_regex = re.compile(r'(?xs)'
+                              r'^\s*\{'
+                              r'(?=.*["\']severity["\']\s*:\s*["\']Warning["\'])'
+                              r'.*\}\s*$'
+                             )
     _exception_regex = re.compile(r'\*\*\* Exception:')
 
     
     def _process_output(self, output):
 
-        def pformat_error(error):
+        def pformat_stderr(error):
+            severity = error.get('severity', None)
+            
+            if severity:
+                severity_info = f"[{severity}] "
+            else:
+                severity_info = ''
+            
             message = '\n'.join(error.get('message', []))
             span = error.get('span', None)
             
@@ -83,19 +96,23 @@ class IGHCi(Kernel):
             else:
                 span_info = ''
                 
-            formatted_output = f"{span_info}{message}"
+            formatted_output = f"{severity_info}{span_info}{message}"
             
             return formatted_output
         
         is_error     = bool(self._error_regex.search(output))
+        is_warning   = bool(self._warning_regex.search(output))
         is_exception = bool(self._exception_regex.search(output))
+        
+        is_ok        = not (is_error or is_exception)
+        is_to_stderr = is_error or is_warning or is_exception
 
         stripped = output.strip()
-        is_html  = not (is_error or is_exception) and stripped.startswith('<html>') and stripped.endswith('</html>')
-
-        if is_error:
+        is_html  = (not is_to_stderr) and stripped.startswith('<html>') and stripped.endswith('</html>')
+        
+        if is_error or is_warning:
             errors    = [json.loads(error) for error in output.split("\r\n") if error]
-            pp_errors = [pformat_error(error) for error in errors]
+            pp_errors = [pformat_stderr(error) for error in errors]
             
             processed_text = "\n\n".join(pp_errors)
         if is_exception:
@@ -103,12 +120,10 @@ class IGHCi(Kernel):
         if is_html:
             html_content   = stripped[len('<html>'):-len('</html>')]
             processed_text = html_content.strip()
-        if not (is_error or is_exception or is_html):
+        if not (is_error or is_warning or is_exception or is_html):
             processed_text = output
-
-        is_to_stderr = is_error or is_exception
         
-        return is_to_stderr, is_html, processed_text
+        return is_ok, is_to_stderr, is_html, processed_text
 
     def _execute_command(self, cmd): 
         try:
@@ -117,9 +132,11 @@ class IGHCi(Kernel):
             if not output: 
                 return 'ok'
 
-            is_to_stderr, is_html, text = self._process_output(output)
+            is_ok, is_to_stderr, is_html, text = self._process_output(output)
             
             if is_html:
+                # TODO: Figure out how mixed output works, 
+                # i.e. how Jupyter works when one cell outputs both text (stdout) and HTML in one cell
                 self.send_response(
                     self.iopub_socket,
                     'display_data',
@@ -128,11 +145,11 @@ class IGHCi(Kernel):
                         'metadata': {}
                     }
                 )
-                # Guaranteed by `not (is_error or is_exception) …`
+                # Guaranteed by `not is_to_stderr …`
                 status = 'ok'
             else:
                 stream = 'stderr' if is_to_stderr else 'stdout'
-                status = 'error'  if is_to_stderr else 'ok'
+                status = 'error'  if is_ok        else 'ok'
                 self.send_response(self.iopub_socket, 
                                    'stream', 
                                    {'name': stream,
@@ -141,17 +158,20 @@ class IGHCi(Kernel):
         except KeyboardInterrupt:
             self.ghci.child.sendintr()
             output_intr = self.ghci.child.before
+            output_intr_formatted = f"Interrupted:\n{output_intr}"
+            self.log.error(output_intr_formatted)
             self.send_response(self.iopub_socket, 
                                'stream', 
                                {'name': "stderr",
-                                'text': f"Interrupted:\n{output_intr}"})
+                                'text': output_intr_formatted})
             return 'abort'
         except Exception as e:
-            self.log.error(str(e))
+            exception_formatted = str(e)
+            self.log.error(exception_formatted)
             self.send_response(self.iopub_socket, 
                                'stream', 
                                {'name': "stderr",
-                                'text': f"{str(e)}"})
+                                'text': exception_formatted})
             return 'error'
 
     _prompt_regex = re.compile(r'(prompt|prompt-cont)')
