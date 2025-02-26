@@ -47,7 +47,7 @@ class IGHCi(Kernel):
         wo_sl_comments = re.sub(r'--.*', '', wo_ml_comments)
         wo_bl          = re.sub(r'^\s*:(?:\{|\})\s*$', '', wo_sl_comments, flags = re.MULTILINE)
     
-        lines = wo_bl.splitlines()
+        lines  = wo_bl.splitlines()
         groups = groupby(lines, key = is_ghci_command)
             
         return [
@@ -62,9 +62,9 @@ class IGHCi(Kernel):
                               r'.*\}\s*$'
                              )
     _warning_regex = re.compile(r'(?xs)'
-                              r'^\s*\{'
-                              r'(?=.*["\']severity["\']\s*:\s*["\']Warning["\'])'
-                              r'.*\}\s*$'
+                                r'^\s*\{'
+                                r'(?=.*["\']severity["\']\s*:\s*["\']Warning["\'])'
+                                r'.*\}\s*$'
                              )
     _exception_regex = re.compile(r'\*\*\* Exception:')
 
@@ -151,7 +151,7 @@ class IGHCi(Kernel):
                 status = 'ok'
             else:
                 stream = 'stderr' if is_to_stderr else 'stdout'
-                status = 'error'  if is_ok        else 'ok'
+                status = 'ok'     if is_ok        else 'error'
                 self.send_response(self.iopub_socket, 
                                    'stream', 
                                    {'name': stream,
