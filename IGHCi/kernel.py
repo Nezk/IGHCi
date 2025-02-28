@@ -212,4 +212,45 @@ class IGHCi(Kernel):
     def do_shutdown(self, restart):
         self.ghci.child.close()
         return {"status": "ok", "restart": restart}
+
+    ## TODO: Investigate bug where expressions like `(pure 3) >>`
+    ## and other operators beginning with `>` or `<` are not displayed.
+    def do_complete(self, code, cursor_pos):
+        line_start   = code.rfind('\n', 0, cursor_pos) + 1
+        current_line = code[line_start:cursor_pos]
+        
+        try:
+            ghci_cmd = f":complete repl \"{current_line}\""
+            output   = self.ghci.run_command(ghci_cmd)
+        except Exception as e: # Not sure how this should work
+            return {
+                'status': 'error',
+                'matches': [],
+                'cursor_start': cursor_pos,
+                'cursor_end': cursor_pos,
+                'metadata': {'error': str(e)}
+            }
     
+        lines  = output.splitlines()   
+        header = lines[0].split(" ", 2)
+
+        if header[0] == '0' or header[1] == '0':
+            return {
+                'status': 'ok',
+                'matches': [],
+                'cursor_start': cursor_pos,
+                'cursor_end': cursor_pos,
+                'metadata': {}
+            }
+        
+        prefix      = header[-1][1:-1]
+        suggestions = [suggestion[1:-1] for suggestion in lines[1:]]
+
+        cursor_start = line_start + len(prefix)
+        return {
+            'status': 'ok',
+            'matches': suggestions,
+            'cursor_start': cursor_start,
+            'cursor_end': cursor_pos,
+            'metadata': {}
+        }
