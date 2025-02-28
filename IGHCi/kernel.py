@@ -165,8 +165,8 @@ class IGHCi(Kernel):
                                 'text': exception_formatted})
             return 'error'
 
-    # TODO: :quit
     # TODO: it's too dumb, it should prevent prompt changes only in commands
+    _quit_regex   = re.compile(r'quit')
     _prompt_regex = re.compile(r'(prompt|prompt-cont)')
     _stdin_regex  = re.compile(r'(getChar|getLine|getContents|interact)')
 
@@ -175,6 +175,7 @@ class IGHCi(Kernel):
             return 'ok'
             
         rules = [
+            (self._quit_regex, "Do not use the :quit command to shut down the kernel."),
             (self._stdin_regex, "Functions dealing with stdin are not currently supported."),
             (self._prompt_regex, "Changing GHCi prompts is not allowed.")
         ]
@@ -213,7 +214,7 @@ class IGHCi(Kernel):
         self.ghci.child.close()
         return {"status": "ok", "restart": restart}
 
-    ## TODO: Investigate bug where expressions like `(pure 3) >>`
+    ## TODO: Investigate bug where completions for expressions like `(pure 3) >>`
     ## and other operators beginning with `>` or `<` are not displayed.
     def do_complete(self, code, cursor_pos):
         line_start   = code.rfind('\n', 0, cursor_pos) + 1
