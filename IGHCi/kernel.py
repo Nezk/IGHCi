@@ -1,7 +1,7 @@
 import re
 import json
 
-from itertools            import groupby
+from itertools            import groupby, chain
 from functools            import reduce
 from ipykernel.kernelbase import Kernel
 from pexpect.replwrap     import REPLWrapper
@@ -29,32 +29,23 @@ class IGHCi(Kernel):
             prompt_change = None,
             continuation_prompt = "ghci| ",
         )
-        
+
     def _process_code(self, code):
-        is_ghci_command = lambda line: line.strip().startswith(':')
+        is_ghci_command = lambda line: line.startswith(':')
         wrap_block      = lambda lines: ":{\n" + "\n".join(lines) + "\n:}"
-            
-        process_non_commands = lambda lines: [
-            wrap_block(block) if len(block) > 1 else block[0]
-            for block in (
-                list(block)
-                for is_nonempty, block in groupby(lines, key = lambda l: l.strip() != '')
-                if is_nonempty
-            )
+        
+        cleaned = re.sub(r'^\s*:(?:\{|\})\s*$', '', code, flags = re.MULTILINE)
+        lines   = cleaned.strip().splitlines()
+        
+        groups = groupby(lines, key = is_ghci_command)
+        
+        processed = [
+            item if is_cmd else [wrap_block(item)]
+            for is_cmd, group in groups
+            for item in [list(group)]
         ]
         
-        wo_ml_comments = re.sub(r'\{-(.*?)\-\}', '', code, flags = re.DOTALL)
-        wo_sl_comments = re.sub(r'--.*', '', wo_ml_comments)
-        wo_bl          = re.sub(r'^\s*:(?:\{|\})\s*$', '', wo_sl_comments, flags = re.MULTILINE)
-    
-        lines  = wo_bl.splitlines()
-        groups = groupby(lines, key = is_ghci_command)
-            
-        return [
-            item
-            for is_cmd, group in groups
-            for item in (list(group) if is_cmd else process_non_commands(list(group)))
-        ]
+        return list(chain.from_iterable(processed))
 
     _error_regex = re.compile(r'(?xs)'
                               r'^\s*\{'
@@ -137,8 +128,6 @@ class IGHCi(Kernel):
             is_ok, is_to_stderr, is_html, text = self._process_output(output)
 
             if is_html:
-                # TODO: Figure out how mixed output works, 
-                # i.e. how Jupyter works when one cell outputs both text (stdout) and HTML in one cell
                 self.send_response(
                     self.iopub_socket,
                     'display_data',
@@ -176,6 +165,7 @@ class IGHCi(Kernel):
                                 'text': exception_formatted})
             return 'error'
 
+    # TODO: :quit
     _prompt_regex = re.compile(r'(prompt|prompt-cont)')
     _stdin_regex  = re.compile(r'(getChar|getLine|getContents|interact)')
 
@@ -221,3 +211,4 @@ class IGHCi(Kernel):
     def do_shutdown(self, restart):
         self.ghci.child.close()
         return {"status": "ok", "restart": restart}
+    
