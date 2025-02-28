@@ -25,11 +25,12 @@ class IGHCi(Kernel):
     def _start_ghci(self):
         self.ghci = REPLWrapper(
             "ghci -fdiagnostics-as-json",
-            orig_prompt = r"ghci> ",
-            prompt_change = None,
+            orig_prompt         = r"ghci> ",
+            prompt_change       = None,
             continuation_prompt = "ghci| ",
         )
 
+    # TODO: precompile regex
     def _process_code(self, code):
         is_ghci_command = lambda line: line.startswith(':')
         wrap_block      = lambda lines: ":{\n" + "\n".join(lines) + "\n:}"
@@ -59,7 +60,6 @@ class IGHCi(Kernel):
                              )
     _exception_regex = re.compile(r'\*\*\* Exception:')
 
-    
     def _process_output(self, output):
 
         def pformat_stderr(error):
@@ -166,6 +166,7 @@ class IGHCi(Kernel):
             return 'error'
 
     # TODO: :quit
+    # TODO: it's too dumb, it should prevent prompt changes only in commands
     _prompt_regex = re.compile(r'(prompt|prompt-cont)')
     _stdin_regex  = re.compile(r'(getChar|getLine|getContents|interact)')
 
