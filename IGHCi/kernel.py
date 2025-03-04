@@ -30,12 +30,13 @@ class IGHCi(Kernel):
             continuation_prompt = "ghci| ",
         )
 
-    # TODO: precompile regex
+    _clean_code_regex = re.compile(r'^\s*:(?:\{|\})\s*$', flags = re.MULTILINE)
+    
     def _process_code(self, code):
         is_ghci_command = lambda line: line.startswith(':')
         wrap_block      = lambda lines: ":{\n" + "\n".join(lines) + "\n:}"
         
-        cleaned = re.sub(r'^\s*:(?:\{|\})\s*$', '', code, flags = re.MULTILINE)
+        cleaned = self._clean_code_regex.sub('', code)
         lines   = cleaned.strip().splitlines()
         
         groups = groupby(lines, key = is_ghci_command)
@@ -104,7 +105,7 @@ class IGHCi(Kernel):
         is_html  = (not is_to_stderr) and stripped.startswith('<html>') and stripped.endswith('</html>')
         
         if is_error or is_warning:
-            errors    = [json.loads(error) for error in output.split("\r\n") if error]
+            errors    = [json.loads(error) for error in output.split("\r\n") if error] # Multiple errors, like when there are multiple holes
             pp_errors = [pformat_stderr(error) for error in errors]
             
             processed_text = "\n\n".join(pp_errors)
@@ -118,6 +119,7 @@ class IGHCi(Kernel):
         
         return is_ok, is_to_stderr, is_html, processed_text
 
+    # TODO: splitting code execution and output?
     def _execute_command(self, cmd): 
         try:
             output = self.ghci.run_command(cmd)
