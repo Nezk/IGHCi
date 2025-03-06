@@ -62,7 +62,30 @@ class IGHCi(Kernel):
     _exception_regex = re.compile(r'\*\*\* Exception:')
 
     def _process_output(self, output):
-
+    
+        def split_output(output):
+            lines = output.splitlines()
+        
+            errors = [json.loads(line) for line in lines if self._error_regex.match(line)]
+            if errors:
+                return errors, None, None, None 
+    
+            warnings     = [json.loads(line) for line in lines if self._warning_regex.match(line)]
+            result_lines = [line for line in lines if not self._warning_regex.match(line)]
+                
+            is_exception = any(self._exception_regex.match(line) for line in result_lines)
+                
+            result = "\n".join(result_lines).strip()
+    
+            # i. e. result is exception
+            if is_exception:
+                if warnings:
+                    # Unpleasant solution
+                    result = "\n\n" + result # TODO: get rid of mutability
+                return None, warnings, result, None  
+                    
+            return None, warnings, None, result
+    
         def pformat_stderr(error):
             severity = error.get('severity', None)
             
@@ -72,11 +95,10 @@ class IGHCi(Kernel):
                 severity_info = ''
             
             message = '\n'.join(error.get('message', []))
-            span = error.get('span', None)
+            span    = error.get('span', None)
             
             if span:
-                file = span.get('file', '<unknown file>')
-                
+                file  = span.get('file', '<unknown file>')
                 start = span.get('start', {})
                 end   = span.get('end', {})
                 
@@ -91,33 +113,26 @@ class IGHCi(Kernel):
                 span_info = ''
                 
             formatted_output = f"{severity_info}{span_info}{message}"
-            
             return formatted_output
+    
+        def process_stderr(to_stderr):
+            return "\n\n".join(map(pformat_stderr, to_stderr))
         
-        is_error     = bool(self._error_regex.search(output))
-        is_warning   = bool(self._warning_regex.search(output))
-        is_exception = bool(self._exception_regex.search(output))
+        errors, warnings, exceptions, result = split_output(output)
+    
+        processed_errors   = process_stderr(errors)   if errors   else None
+        processed_warnings = process_stderr(warnings) if warnings else None
+    
+        processed_html = None
         
-        is_ok        = not (is_error or is_exception)
-        is_to_stderr = is_error or is_warning or is_exception
-
-        stripped = output.strip()
-        is_html  = (not is_to_stderr) and stripped.startswith('<html>') and stripped.endswith('</html>')
-        
-        if is_error or is_warning:
-            errors    = [json.loads(error) for error in output.split("\r\n") if error] # Multiple errors, like when there are multiple holes
-            pp_errors = [pformat_stderr(error) for error in errors]
-            
-            processed_text = "\n\n".join(pp_errors)
-        if is_exception:
-            processed_text = stripped
-        if is_html:
-            html_content   = stripped[len('<html>'):-len('</html>')]
-            processed_text = html_content.strip()
-        if not (is_error or is_warning or is_exception or is_html):
-            processed_text = output
-        
-        return is_ok, is_to_stderr, is_html, processed_text
+        if not (errors or exceptions) and result:
+            stripped = result.strip()
+            if stripped.startswith('<html>') and stripped.endswith('</html>'):
+                # Extract inner HTML content
+                html_content   = stripped[len('<html>'):-len('</html>')].strip()
+                processed_html = html_content
+    
+        return processed_errors, processed_warnings, exceptions, processed_html, result
 
     # TODO: splitting code execution and output?
     def _execute_command(self, cmd): 
@@ -127,27 +142,42 @@ class IGHCi(Kernel):
             if not output: 
                 return 'ok'
 
-            is_ok, is_to_stderr, is_html, text = self._process_output(output)
-
-            if is_html:
+            errors, warnings, exceptions, html, result = self._process_output(output)
+            
+            if errors:
+                self.send_response(self.iopub_socket, 'stream', {
+                    'name': 'stderr',
+                    'text': errors
+                })
+                return 'error'
+            
+            if warnings:
+                self.send_response(self.iopub_socket, 'stream', {
+                    'name': 'stderr',
+                    'text': warnings
+                })
+            
+            if exceptions:
+                self.send_response(self.iopub_socket, 'stream', {
+                    'name': 'stderr',
+                    'text': exceptions
+                })
+                return 'error'
+            
+            if html:
                 self.send_response(
                     self.iopub_socket,
                     'display_data',
-                    {
-                        'data': {'text/html': text},
-                        'metadata': {}
-                    }
+                    {'data': {'text/html': html}, 'metadata': {}}
                 )
-                # Guaranteed by `not is_to_stderr …`
-                status = 'ok'
-            else:
-                stream = 'stderr' if is_to_stderr else 'stdout'
-                status = 'ok'     if is_ok        else 'error'
-                self.send_response(self.iopub_socket, 
-                                   'stream', 
-                                   {'name': stream,
-                                    'text': text})
-            return status
+                return 'ok'
+            
+            self.send_response(self.iopub_socket, 'stream', {
+                'name': 'stdout',
+                'text': result
+            })
+            return 'ok'
+            
         except KeyboardInterrupt:
             self.ghci.child.sendintr()
             output_intr = self.ghci.child.before
