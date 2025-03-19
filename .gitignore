@@ -153,4 +153,4 @@ cython_debug/
 
 .DS_Store
 _darcs/
-.*~ # emacs
+.~ # emacs
