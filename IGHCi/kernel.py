@@ -7,15 +7,17 @@ from ipykernel.kernelbase import Kernel
 from pexpect.replwrap     import REPLWrapper
 
 class IGHCi(Kernel):
-    implementation = 'Haskell'
+    implementation         = 'Haskell'
     implementation_version = '0.1'
-    language = 'haskell'
-    language_version = '9.12.1'
+    language               = 'haskell'
+    language_version       = '9.12.1'
+    
     language_info = {
-        'name': 'haskell',
-        'mimetype': 'text/x-haskell',
+        'name':           'haskell',
+        'mimetype':       'text/x-haskell',
         'file_extension': '.hs',
     }
+    
     banner = "IGHCi kernel"
     
     def __init__(self, **kwargs):
@@ -246,22 +248,119 @@ class IGHCi(Kernel):
         self.ghci.child.close()
         return {"status": "ok", "restart": restart}
 
+    _LATEX_COMPLETIONS = {        
+         '\\::': '∷',            
+         '\\=>': '⇒',  
+        
+         '\\->': '→',            
+         '\\<-': '←', 
+
+         '\\r': '→',
+        
+         '\\>-': '⤚',           
+         '\\-<': '⤙',           
+         '\\>>-': '⤜',          
+         '\\-<<': '⤛',          
+         '\\*': '★',    
+        
+         '\\forall': '∀',  
+        
+         '\\(|': '⦇',            
+         '\\|)': '⦈',            
+         '\\[|': '⟦',            
+         '\\|]': '⟧',  
+        
+         '\\%1->': '⊸', 
+         '\\-o': '⊸',
+
+         '\\o': '∘',
+
+         '\\alpha': 'α',
+         '\\beta': 'β',
+         '\\gamma': 'γ',
+         '\\delta': 'δ',
+         '\\epsilon': 'ε',
+         '\\zeta': 'ζ',
+         '\\eta': 'η',
+         '\\theta': 'θ',
+         '\\iota': 'ι',
+         '\\kappa': 'κ',
+         '\\lambda': 'λ',
+         '\\mu': 'μ',
+         '\\nu': 'ν',
+         '\\xi': 'ξ',
+#         '\\omicron': 'ο',
+         '\\pi': 'π',
+#         '\\rho': 'ρ',
+         '\\sigma': 'σ',
+         '\\tau': 'τ',
+         '\\upsilon': 'υ',
+         '\\phi': 'φ',
+         '\\chi': 'χ',
+         '\\psi': 'ψ',
+         '\\omega': 'ω',
+
+         '\\Alpha': 'Α',
+         '\\Beta': 'Β',
+         '\\Gamma': 'Γ',
+         '\\Delta': 'Δ',
+         '\\Epsilon': 'Ε',
+         '\\Zeta': 'Ζ',
+         '\\Eta': 'Η',
+         '\\Theta': 'Θ',
+         '\\Iota': 'Ι',
+         '\\Kappa': 'Κ',
+         '\\Lambda': 'Λ',
+         '\\Mu': 'Μ',
+         '\\Nu': 'Ν',
+         '\\Xi': 'Ξ',
+         '\\Omicron': 'Ο',
+         '\\Pi': 'Π',
+         '\\Rho': 'Ρ',
+         '\\Sigma': 'Σ',
+         '\\Tau': 'Τ',
+         '\\Upsilon': 'Υ',
+         '\\Phi': 'Φ',
+         '\\Chi': 'Χ',
+         '\\Psi': 'Ψ',
+         '\\Omega': 'Ω'
+    }
+    
     ## TODO: Investigate bug where completions for expressions like `(pure 3) >>`
     ## and other operators beginning with `>` or `<` are not displayed.
     def do_complete(self, code, cursor_pos):
-        line_start   = code.rfind('\n', 0, cursor_pos) + 1
-        current_line = code[line_start:cursor_pos]
+        line_start        = code.rfind('\n', 0, cursor_pos) + 1
+        current_line_part = code[line_start:cursor_pos]
+
+        latex_pattern = re.compile(r'(\\\S*)$')
+        latex_match   = latex_pattern.search(current_line_part)
+        if latex_match:
+            token = latex_match.group(1)
+
+            latex_suggestions = [self._LATEX_COMPLETIONS[key] 
+                                 for key in self._LATEX_COMPLETIONS 
+                                 if key.startswith(token)]
+            if latex_suggestions:
+                token_start = code.rfind(token, 0, cursor_pos)
+                return {
+                    'status':       'ok',
+                    'matches':      latex_suggestions,
+                    'cursor_start': token_start,
+                    'cursor_end':   cursor_pos,
+                    'metadata':     {}
+                }
         
         try:
-            ghci_cmd = f":complete repl \"{current_line}\""
-            output   = self.ghci.run_command(ghci_cmd)
-        except Exception as e: # Not sure how this should work
+            current_line = code[line_start:cursor_pos]
+            ghci_cmd     = f":complete repl \"{current_line}\""
+            output       = self.ghci.run_command(ghci_cmd)
+        except Exception as e:
             return {
-                'status': 'error',
-                'matches': [],
+                'status':       'error',
+                'matches':      [],
                 'cursor_start': cursor_pos,
-                'cursor_end': cursor_pos,
-                'metadata': {'error': str(e)}
+                'cursor_end':   cursor_pos,
+                'metadata':     {'error': str(e)}
             }
     
         lines  = output.splitlines()   
@@ -269,21 +368,24 @@ class IGHCi(Kernel):
 
         if header[0] == '0' or header[1] == '0':
             return {
-                'status': 'ok',
-                'matches': [],
+                'status':       'ok',
+                'matches':      [],
                 'cursor_start': cursor_pos,
-                'cursor_end': cursor_pos,
-                'metadata': {}
+                'cursor_end':   cursor_pos,
+                'metadata':     {}
             }
         
         prefix      = header[-1][1:-1]
         suggestions = [suggestion[1:-1] for suggestion in lines[1:]]
 
         cursor_start = line_start + len(prefix)
+
+        # meta = [{"start": cursor_start, "end": cursor_pos, "text": sug, "type": "typ"} for sug in suggestions]
+        
         return {
-            'status': 'ok',
-            'matches': suggestions,
+            'status':       'ok',
+            'matches':      suggestions,
             'cursor_start': cursor_start,
-            'cursor_end': cursor_pos,
-            'metadata': {}
+            'cursor_end':   cursor_pos,
+            'metadata':     {} # {"_jupyter_types_experimental": meta}
         }
