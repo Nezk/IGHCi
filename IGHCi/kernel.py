@@ -29,7 +29,8 @@ class IGHCi(Kernel):
         self._start_ghci()
 
     def _start_ghci(self):
-        # Start GHCi with the module path added to the search path
+        # TODO: Generate a random prompt using pexpect’s built-in mechanisms, or getting rid of pexpect entirely.
+        # If a user has a custom GHCi configuration file (.ghci) that changes the prompt the kernel will fail to recognize when a command has finished executing.
         self.ghci = REPLWrapper(
             f"ghci -fdiagnostics-as-json -i{self._module_path}",
             orig_prompt         = r"ghci> ",
@@ -84,7 +85,7 @@ class IGHCi(Kernel):
                 
             result = "\n".join(result_lines).strip()
     
-            # i. e. result is exception
+            # I. e. result is exception
             if is_exception:
                 return None, warnings, f"\n\n{result}" if warnings else result, None
                     
@@ -187,8 +188,8 @@ class IGHCi(Kernel):
             return 'ok'
             
         rules = [
-            (self._quit_regex, "Do not use the :quit command to shut down the kernel."),
-            (self._stdin_regex, "Functions dealing with stdin are not currently supported."),
+            (self._quit_regex,   "Do not use the :quit command to shut down the kernel."),
+            (self._stdin_regex,  "Functions dealing with stdin are not currently supported."),
             (self._prompt_regex, "Changing GHCi prompts is not allowed.")
         ]
 
@@ -213,7 +214,7 @@ class IGHCi(Kernel):
         
         # Determine module path components for hierarchical modules
         path_components = path_raw.split('.')[:-1] if path_raw else []
-        module_dir = os.path.join(self._module_path, *path_components)
+        module_dir      = os.path.join(self._module_path, *path_components)
         
         os.makedirs(module_dir, exist_ok=True)
         
