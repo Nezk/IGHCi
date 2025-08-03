@@ -81,10 +81,7 @@ class IGHCi(Kernel):
     
             # i. e. result is exception
             if is_exception:
-                if warnings:
-                    # Unpleasant solution
-                    result = "\n\n" + result # TODO: get rid of mutability
-                return None, warnings, result, None  
+                return None, warnings, f"\n\n{result}" if warnings else result, None
                     
             return None, warnings, None, result
     
@@ -176,10 +173,9 @@ class IGHCi(Kernel):
         })
         return 'ok'
 
-    # TODO: it's too dumb, it should prevent prompt changes only in commands
-    _quit_regex   = re.compile(r'quit')
-    _prompt_regex = re.compile(r'(prompt|prompt-cont)')
-    _stdin_regex  = re.compile(r'(getChar|getLine|getContents|interact)')
+    _quit_regex   = re.compile(r'^\s*:q\w*\s*$', re.MULTILINE)
+    _prompt_regex = re.compile(r'^\s*:set\s+prompt(?!-function)', re.MULTILINE)
+    _stdin_regex  = re.compile(r'\b(getChar|getLine|getContents|interact)\b')
 
     def _early_check(self, code):    
         if not code:

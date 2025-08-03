@@ -6,7 +6,7 @@ with open('requirements.txt') as f:
 
 setup(
     name             = "IGHCi",
-    version          = "0.0.1",
+    version          = "0.0.2",
     description      = "Minimalistic kernel for Haskell",
     long_description = open('README.md').read(),
     license          = "GPLv3",
