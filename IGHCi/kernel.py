@@ -1,4 +1,5 @@
 import re
+import os
 import json
 
 from itertools            import groupby, chain
@@ -8,9 +9,8 @@ from pexpect.replwrap     import REPLWrapper
 
 class IGHCi(Kernel):
     implementation         = 'Haskell'
-    implementation_version = '0.1'
+    implementation_version = '0.0.2'
     language               = 'haskell'
-    language_version       = '9.12.1'
     
     language_info = {
         'name':           'haskell',
@@ -136,68 +136,45 @@ class IGHCi(Kernel):
     
         return processed_errors, processed_warnings, exceptions, processed_html, result
 
-    # TODO: splitting code execution and output?
-    def _execute_command(self, cmd): 
-        try:
-            output = self.ghci.run_command(cmd)
+    def _send_output(self, output):
+        if not output: 
+            return 'ok'
 
-            if not output: 
-                return 'ok'
-
-            errors, warnings, exceptions, html, result = self._process_output(output)
+        errors, warnings, exceptions, html, result = self._process_output(output)
             
-            if errors:
-                self.send_response(self.iopub_socket, 'stream', {
-                    'name': 'stderr',
-                    'text': errors
-                })
-                return 'error'
-            
-            if warnings:
-                self.send_response(self.iopub_socket, 'stream', {
-                    'name': 'stderr',
-                    'text': warnings
-                })
-            
-            if exceptions:
-                self.send_response(self.iopub_socket, 'stream', {
-                    'name': 'stderr',
-                    'text': exceptions
-                })
-                return 'error'
-            
-            if html:
-                self.send_response(
-                    self.iopub_socket,
-                    'display_data',
-                    {'data': {'text/html': html}, 'metadata': {}}
-                )
-                return 'ok'
-            
+        if errors:
             self.send_response(self.iopub_socket, 'stream', {
-                'name': 'stdout',
-                'text': result
+                'name': 'stderr',
+                'text': errors
             })
+            return 'error'
+            
+        if warnings:
+            self.send_response(self.iopub_socket, 'stream', {
+                'name': 'stderr',
+                'text': warnings
+            })
+            
+        if exceptions:
+            self.send_response(self.iopub_socket, 'stream', {
+                'name': 'stderr',
+                'text': exceptions
+            })
+            return 'error'
+            
+        if html:
+            self.send_response(
+                self.iopub_socket,
+                'display_data',
+                {'data': {'text/html': html}, 'metadata': {}}
+            )
             return 'ok'
             
-        except KeyboardInterrupt:
-            self.ghci.child.sendintr()
-            output_intr = self.ghci.child.before
-            output_intr_formatted = f"Interrupted:\n{output_intr}"
-            self.log.error(output_intr_formatted)
-            self.send_response(self.iopub_socket, 
-                               'stream', 
-                               {'name': "stderr",
-                                'text': output_intr_formatted})
-            return 'abort'
-        except Exception as e:
-            exception_formatted = str(e)
-            self.log.error(exception_formatted)
-            self.send_response(self.iopub_socket, 
-                               'stream', 
-                               {'name': "stderr",
-                                'text': exception_formatted})
-            return 'error'
+        self.send_response(self.iopub_socket, 'stream', {
+            'name': 'stdout',
+            'text': result
+        })
+        return 'ok'
 
     # TODO: it's too dumb, it should prevent prompt changes only in commands
     _quit_regex   = re.compile(r'quit')
@@ -224,20 +201,83 @@ class IGHCi(Kernel):
                                     'text': msg})
                 return 'error'
         return None
+
+    _module_regex = re.compile(
+        r'^.*?^\s*module\s+((?:[A-Z][\w\']*\.)*)([A-Z][\w\']*)\b',
+        flags=re.DOTALL | re.MULTILINE
+    )
+
+    def _load_module(self, module_match, code):
+
+        path_raw, module_name = module_match.groups()
+
+        # TODO: Not sure if it has any sense
+        if path_raw:
+            path     = path_raw.split(".")[:-1]
+            dir_path = os.path.join('/tmp', *path)
+            os.makedirs(dir_path, exist_ok = True)
+                
+            filename = os.path.join(dir_path, f"{module_name}.hs")
+        else:
+            dir_path = os.path.join('/tmp')
+            filename = f"/tmp/{module_name}.hs"
+                
+        with open(filename, 'w') as f:
+                f.write(code)
+            
+        try:
+            cmd = f":l {filename}"
+            # TODO: mention context cleanup?
+            output = self.ghci.run_command(cmd)
+            return self._send_output(output)
+        except Exception as e:
+            self.send_response(self.iopub_socket, 'stream', {
+                'name': 'stderr',
+                'text': f"Error handling module: {str(e)}"
+            })
+            return 'error'
+    
+    def _execute_code(self, code): 
+        
+        if early_status := self._early_check(code):
+            return early_status
+        
+        try:
+            output = self.ghci.run_command(code)
+            return self._send_output(output)
+        except KeyboardInterrupt:
+            self.ghci.child.sendintr()
+            output_intr           = self.ghci.child.before
+            output_intr_formatted = f"Interrupted:\n{output_intr}"
+            self.log.error(output_intr_formatted)
+            self.send_response(self.iopub_socket, 
+                               'stream', 
+                               {'name': "stderr",
+                                'text': output_intr_formatted})
+            return 'abort'
+        except Exception as e:
+            exception_formatted = str(e)
+            self.log.error(exception_formatted)
+            self.send_response(self.iopub_socket, 
+                               'stream', 
+                               {'name': "stderr",
+                                'text': exception_formatted})
+            return 'error'
     
     def do_execute(self, code, silent, 
                    store_history    = True,
                    user_expressions = None,
                    allow_stdin      = False):
-        return_response = lambda status: {'status': status, 'execution_count': self.execution_count}
         
-        if early_status := self._early_check(code):
-            return return_response(early_status)
+        return_response = lambda status: {'status': status, 'execution_count': self.execution_count}
+
+        if module_match := self._module_regex.search(code):
+            return return_response(self._load_module(module_match, code))
         
         processed_code = self._process_code(code)
-        
+
         status = reduce(
-            lambda acc, cmd: acc if acc in {'error', 'abort'} else self._execute_command(cmd),
+            lambda acc, code: acc if acc in {'error', 'abort'} else self._execute_code(code),
             processed_code,
             'ok'
         )
@@ -248,82 +288,13 @@ class IGHCi(Kernel):
         self.ghci.child.close()
         return {"status": "ok", "restart": restart}
 
+    # I don't think there is any need in greek alphabet
     _LATEX_COMPLETIONS = {        
-         '\\::': '∷',            
-         '\\=>': '⇒',  
-        
-         '\\->': '→',            
-         '\\<-': '←', 
-
-         '\\r': '→',
-        
-         '\\>-': '⤚',           
-         '\\-<': '⤙',           
-         '\\>>-': '⤜',          
-         '\\-<<': '⤛',          
-         '\\*': '★',    
-        
-         '\\forall': '∀',  
-        
-         '\\(|': '⦇',            
-         '\\|)': '⦈',            
-         '\\[|': '⟦',            
-         '\\|]': '⟧',  
-        
-         '\\%1->': '⊸', 
-         '\\-o': '⊸',
-
+         '\\::': '∷', '\\=>': '⇒', '\\->': '→', '\\<-': '←', '\\r': '→',
+         '\\u': '↑', '\\d': '↓', '\\>-': '⤚', '\\-<': '⤙', '\\>>-': '⤜',
+         '\\-<<': '⤛', '\\*': '★', '\\forall': '∀', '\\in': '∈', '\\(|': '⦇',
+         '\\|)': '⦈', '\\[|': '⟦', '\\|]': '⟧', '\\%1->': '⊸', '\\-o': '⊸',
          '\\o': '∘',
-
-         '\\alpha': 'α',
-         '\\beta': 'β',
-         '\\gamma': 'γ',
-         '\\delta': 'δ',
-         '\\epsilon': 'ε',
-         '\\zeta': 'ζ',
-         '\\eta': 'η',
-         '\\theta': 'θ',
-         '\\iota': 'ι',
-         '\\kappa': 'κ',
-         '\\lambda': 'λ',
-         '\\mu': 'μ',
-         '\\nu': 'ν',
-         '\\xi': 'ξ',
-#         '\\omicron': 'ο',
-         '\\pi': 'π',
-#         '\\rho': 'ρ',
-         '\\sigma': 'σ',
-         '\\tau': 'τ',
-         '\\upsilon': 'υ',
-         '\\phi': 'φ',
-         '\\chi': 'χ',
-         '\\psi': 'ψ',
-         '\\omega': 'ω',
-
-         '\\Alpha': 'Α',
-         '\\Beta': 'Β',
-         '\\Gamma': 'Γ',
-         '\\Delta': 'Δ',
-         '\\Epsilon': 'Ε',
-         '\\Zeta': 'Ζ',
-         '\\Eta': 'Η',
-         '\\Theta': 'Θ',
-         '\\Iota': 'Ι',
-         '\\Kappa': 'Κ',
-         '\\Lambda': 'Λ',
-         '\\Mu': 'Μ',
-         '\\Nu': 'Ν',
-         '\\Xi': 'Ξ',
-         '\\Omicron': 'Ο',
-         '\\Pi': 'Π',
-         '\\Rho': 'Ρ',
-         '\\Sigma': 'Σ',
-         '\\Tau': 'Τ',
-         '\\Upsilon': 'Υ',
-         '\\Phi': 'Φ',
-         '\\Chi': 'Χ',
-         '\\Psi': 'Ψ',
-         '\\Omega': 'Ω'
     }
     
     ## TODO: Investigate bug where completions for expressions like `(pure 3) >>`
