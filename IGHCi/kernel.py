@@ -1,6 +1,8 @@
 import re
 import os
 import json
+import tempfile
+import shutil
 
 from itertools            import groupby, chain
 from functools            import reduce
@@ -22,11 +24,14 @@ class IGHCi(Kernel):
     
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
+        # Create a temporary directory for storing module files for this kernel session
+        self._module_path = tempfile.mkdtemp()
         self._start_ghci()
 
     def _start_ghci(self):
+        # Start GHCi with the module path added to the search path
         self.ghci = REPLWrapper(
-            "ghci -fdiagnostics-as-json",
+            f"ghci -fdiagnostics-as-json -i{self._module_path}",
             orig_prompt         = r"ghci> ",
             prompt_change       = None,
             continuation_prompt = "ghci| ",
@@ -204,26 +209,21 @@ class IGHCi(Kernel):
     )
 
     def _load_module(self, module_match, code):
-
         path_raw, module_name = module_match.groups()
+        
+        # Determine module path components for hierarchical modules
+        path_components = path_raw.split('.')[:-1] if path_raw else []
+        module_dir = os.path.join(self._module_path, *path_components)
+        
+        os.makedirs(module_dir, exist_ok=True)
+        
+        filename = os.path.join(module_dir, f"{module_name}.hs")
 
-        # TODO: Not sure if it has any sense
-        if path_raw:
-            path     = path_raw.split(".")[:-1]
-            dir_path = os.path.join('/tmp', *path)
-            os.makedirs(dir_path, exist_ok = True)
-                
-            filename = os.path.join(dir_path, f"{module_name}.hs")
-        else:
-            dir_path = os.path.join('/tmp')
-            filename = f"/tmp/{module_name}.hs"
-                
         with open(filename, 'w') as f:
-                f.write(code)
-            
+            f.write(code)
+
         try:
             cmd = f":l {filename}"
-            # TODO: mention context cleanup?
             output = self.ghci.run_command(cmd)
             return self._send_output(output)
         except Exception as e:
@@ -282,6 +282,8 @@ class IGHCi(Kernel):
 
     def do_shutdown(self, restart):
         self.ghci.child.close()
+        # Clean up the temporary directory on shutdown
+        shutil.rmtree(self._module_path)
         return {"status": "ok", "restart": restart}
 
     # I don't think there is any need in greek alphabet
