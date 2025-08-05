@@ -193,9 +193,7 @@ class IGHCi(Kernel):
             (self._prompt_regex, "Changing GHCi prompts is not allowed.")
         ]
 
-        matchings = [message for regex, message in rules if re.findall(regex, code)]
-
-        if matchings:
+        if matchings := [message for regex, message in rules if re.findall(regex, code)]
             matching_msg = "\n".join(matchings)
             self.send_response(self.iopub_socket, 
                                 'stream', 
