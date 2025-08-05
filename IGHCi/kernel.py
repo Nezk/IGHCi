@@ -196,12 +196,12 @@ class IGHCi(Kernel):
         matchings = [message for regex, message in rules if re.findall(regex, code)]
 
         if matchings:
-            for msg in matchings:
-                self.send_response(self.iopub_socket, 
-                                   'stream', 
-                                   {'name': "stderr",
-                                    'text': msg})
-                return 'error'
+            matching_msg = "\n".join(matchings)
+            self.send_response(self.iopub_socket, 
+                                'stream', 
+                                {'name': "stderr",
+                                 'text': matching_msg})
+            return 'error'
         return None
 
     _module_regex = re.compile(
@@ -235,10 +235,6 @@ class IGHCi(Kernel):
             return 'error'
     
     def _execute_code(self, code): 
-        
-        if early_status := self._early_check(code):
-            return early_status
-        
         try:
             output = self.ghci.run_command(code)
             return self._send_output(output)
@@ -267,6 +263,9 @@ class IGHCi(Kernel):
                    allow_stdin      = False):
         
         return_response = lambda status: {'status': status, 'execution_count': self.execution_count}
+
+        if early_status := self._early_check(code):
+            return return_response(early_status)
 
         if module_match := self._module_regex.search(code):
             return return_response(self._load_module(module_match, code))
@@ -299,6 +298,8 @@ class IGHCi(Kernel):
     ## TODO: Investigate bug where completions for expressions like `(pure 3) >>`
     ## and other operators beginning with `>` or `<` are not displayed.
     def do_complete(self, code, cursor_pos):
+        # TODO: function for returning dict with 'status' and so on
+        
         line_start        = code.rfind('\n', 0, cursor_pos) + 1
         current_line_part = code[line_start:cursor_pos]
 
