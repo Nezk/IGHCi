@@ -30,9 +30,9 @@ class IGHCi(Kernel):
 
     def _start_ghci(self):
         # TODO: Generate a random prompt using pexpect’s built-in mechanisms, or getting rid of pexpect entirely.
-        # If a user has a custom GHCi configuration file (.ghci) that changes the prompt the kernel will fail to recognize when a command has finished executing.
         self.ghci = REPLWrapper(
-            f"ghci -fdiagnostics-as-json -i{self._module_path}",
+            # -fdiagnostics-as-json is supported only for GHC >= 9.10
+            f"ghci -ignore-dot-ghci -fdiagnostics-as-json -i{self._module_path}",
             orig_prompt         = r"ghci> ",
             prompt_change       = None,
             continuation_prompt = "ghci| ",
