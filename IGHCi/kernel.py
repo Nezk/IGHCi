@@ -179,7 +179,7 @@ class IGHCi(Kernel):
 
     _quit_regex   = re.compile(r'^\s*:q\w*\s*$', re.MULTILINE)
     _prompt_regex = re.compile(r'^\s*:set\s+prompt(?!-function)', re.MULTILINE)
-    # Not complete by any means
+    # Not exhaustive by any means
     _stdin_regex  = re.compile(r'\b(getChar|getLine|getContents|interact|hGetLine|hGetContents|hGetContents|hGetChar)\b')
 
     def _early_check(self, code):    
@@ -237,13 +237,18 @@ class IGHCi(Kernel):
             return self._send_output(output)
         except KeyboardInterrupt:
             self.ghci.child.sendintr()
-            output_intr           = self.ghci.child.before
-            output_intr_formatted = f"Interrupted:\n{output_intr}"
-            self.log.error(output_intr_formatted)
-            self.send_response(self.iopub_socket, 
-                               'stream', 
-                               {'name': "stderr",
-                                'text': output_intr_formatted})
+            
+            # Wait for the prompt after interruption
+            self.ghci.child.expect(self.ghci.prompt)
+            output_intr = self.ghci.child.before
+
+            if output_intr.strip():
+                output_intr_formatted = f"Interrupted:\n{output_intr}"
+                self.send_response(self.iopub_socket, 'stream', {
+                    'name': "stderr",
+                    'text': output_intr_formatted
+                })
+            
             return 'abort'
         except Exception as e:
             exception_formatted = str(e)
