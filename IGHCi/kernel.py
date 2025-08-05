@@ -74,19 +74,17 @@ class IGHCi(Kernel):
         def split_output(output):
             lines = output.splitlines()
         
-            errors = [json.loads(line) for line in lines if self._error_regex.match(line)]
-            if errors:
+            if errors := [json.loads(line) for line in lines if self._error_regex.match(line)]:
                 return errors, None, None, None 
     
             warnings     = [json.loads(line) for line in lines if self._warning_regex.match(line)]
             result_lines = [line for line in lines if not self._warning_regex.match(line)]
-                
-            is_exception = any(self._exception_regex.match(line) for line in result_lines)
-                
+
             result = "\n".join(result_lines).strip()
-    
+            
             # I. e. result is exception
-            if is_exception:
+            if any(self._exception_regex.match(line) for line in result_lines):
+                # Adding newlines for separating exception from previous warnings
                 return None, warnings, f"\n\n{result}" if warnings else result, None
                     
             return None, warnings, None, result
@@ -193,7 +191,7 @@ class IGHCi(Kernel):
             (self._prompt_regex, "Changing GHCi prompts is not allowed.")
         ]
 
-        if matchings := [message for regex, message in rules if re.findall(regex, code)]
+        if matchings := [message for regex, message in rules if re.findall(regex, code)]:
             matching_msg = "\n".join(matchings)
             self.send_response(self.iopub_socket, 
                                 'stream', 
@@ -214,7 +212,7 @@ class IGHCi(Kernel):
         path_components = path_raw.split('.')[:-1] if path_raw else []
         module_dir      = os.path.join(self._module_path, *path_components)
         
-        os.makedirs(module_dir, exist_ok=True)
+        os.makedirs(module_dir, exist_ok = True)
         
         filename = os.path.join(module_dir, f"{module_name}.hs")
 
