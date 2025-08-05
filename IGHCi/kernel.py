@@ -179,7 +179,8 @@ class IGHCi(Kernel):
 
     _quit_regex   = re.compile(r'^\s*:q\w*\s*$', re.MULTILINE)
     _prompt_regex = re.compile(r'^\s*:set\s+prompt(?!-function)', re.MULTILINE)
-    _stdin_regex  = re.compile(r'\b(getChar|getLine|getContents|interact)\b')
+    # Not complete by any means
+    _stdin_regex  = re.compile(r'\b(getChar|getLine|getContents|interact|hGetLine|hGetContents|hGetContents|hGetChar)\b')
 
     def _early_check(self, code):    
         if not code:
