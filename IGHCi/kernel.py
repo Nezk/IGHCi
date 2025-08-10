@@ -6,6 +6,7 @@ import shutil
 
 from itertools            import groupby, chain
 from functools            import reduce
+from dataclasses          import dataclass
 from ipykernel.kernelbase import Kernel
 from pexpect.replwrap     import REPLWrapper
 
@@ -57,6 +58,25 @@ class IGHCi(Kernel):
         
         return list(chain.from_iterable(processed))
 
+    @dataclass
+    class ProcessedError:
+        errors: str
+
+    @dataclass
+    class ProcessedException:
+        warnings: str | None
+        exception: str
+
+    @dataclass
+    class ProcessedHTML:
+        warnings: str | None
+        html: str
+
+    @dataclass
+    class ProcessedResult:
+        warnings: str | None
+        result: str
+    
     _error_regex = re.compile(r'(?xs)'
                               r'^\s*\{'
                               r'(?=.*["\']severity["\']\s*:\s*["\']Error["\'])'
@@ -70,24 +90,6 @@ class IGHCi(Kernel):
     _exception_regex = re.compile(r'\*\*\* Exception:')
 
     def _process_output(self, output):
-    
-        def split_output(output):
-            lines = output.splitlines()
-        
-            if errors := [json.loads(line) for line in lines if self._error_regex.match(line)]:
-                return errors, None, None, None 
-    
-            warnings     = [json.loads(line) for line in lines if self._warning_regex.match(line)]
-            result_lines = [line for line in lines if not self._warning_regex.match(line)]
-
-            result = "\n".join(result_lines).strip()
-            
-            # I. e. result is exception
-            if any(self._exception_regex.match(line) for line in result_lines):
-                # Adding newlines for separating exception from previous warnings
-                return None, warnings, f"\n\n{result}" if warnings else result, None
-                    
-            return None, warnings, None, result
     
         def pformat_stderr(error):
             severity = error.get('severity', None)
@@ -118,64 +120,63 @@ class IGHCi(Kernel):
             formatted_output = f"{severity_info}{span_info}{message}"
             return formatted_output
     
-        def process_stderr(to_stderr):
-            return "\n\n".join(map(pformat_stderr, to_stderr))
+        process_stderr = lambda to_stderr: "\n\n".join(map(pformat_stderr, to_stderr))
+
+        lines       = output.splitlines()
+        match_lines = lambda regex: [json.loads(line) for line in lines if regex.match(line)]
         
-        errors, warnings, exceptions, result = split_output(output)
+        if errors := match_lines(self._error_regex):
+            processed_errors = process_stderr(errors)
+            return self.ProcessedError(errors = processed_errors)
     
-        processed_errors   = process_stderr(errors)   if errors   else None
-        processed_warnings = process_stderr(warnings) if warnings else None
-    
-        processed_html = None
+        if warnings := match_lines(self._warning_regex):
+            processed_warnings = process_stderr(warnings)
+        else:
+            processed_warnings = None
         
-        if not (errors or exceptions) and result:
-            stripped = result.strip()
-            if stripped.startswith('<html>') and stripped.endswith('</html>'):
-                # Extract inner HTML content
-                html_content   = stripped[len('<html>'):-len('</html>')].strip()
-                processed_html = html_content
-    
-        return processed_errors, processed_warnings, exceptions, processed_html, result
+        result_lines = [line for line in lines if not self._warning_regex.match(line)]
+        result       = "\n".join(result_lines).strip()
+            
+        # I. e. result is exception
+        if any(self._exception_regex.match(line) for line in result_lines):
+            # Adding newlines for separating exception from previous warnings
+            processed_exception = f"\n\n{result}" if warnings else result
+            return self.ProcessedException(warnings = processed_warnings, exception = processed_exception)
+
+        # TODO: Split a single output containing multiple `<html>` wrappers into separate messages.
+        if result.startswith('<html>') and result.endswith('</html>'):
+            processed_html = result[len('<html>'):-len('</html>')].strip()
+            return self.ProcessedHTML(warnings = processed_warnings, html = processed_html)
+            
+        return self.ProcessedResult(warnings = processed_warnings, result = result)
 
     def _send_output(self, output):
+
         if not output: 
             return 'ok'
 
-        errors, warnings, exceptions, html, result = self._process_output(output)
-            
-        if errors:
-            self.send_response(self.iopub_socket, 'stream', {
-                'name': 'stderr',
-                'text': errors
-            })
-            return 'error'
-            
-        if warnings:
-            self.send_response(self.iopub_socket, 'stream', {
-                'name': 'stderr',
-                'text': warnings
-            })
-            
-        if exceptions:
-            self.send_response(self.iopub_socket, 'stream', {
-                'name': 'stderr',
-                'text': exceptions
-            })
-            return 'error'
-            
-        if html:
-            self.send_response(
-                self.iopub_socket,
-                'display_data',
-                {'data': {'text/html': html}, 'metadata': {}}
-            )
-            return 'ok'
-            
-        self.send_response(self.iopub_socket, 'stream', {
-            'name': 'stdout',
-            'text': result
-        })
-        return 'ok'
+        processed_output = self._process_output(output)
+
+        # So unpleasant…
+        if not isinstance(processed_output, self.ProcessedError):
+            if warnings := processed_output.warnings:
+                self.send_response(self.iopub_socket, 'stream', {'name': 'stderr', 'text': warnings})
+        
+        match processed_output:
+            case self.ProcessedError(errors):
+                self.send_response(self.iopub_socket, 'stream', {'name': 'stderr', 'text': errors})
+                return 'error'
+            case self.ProcessedException(_, exceptions):
+                self.send_response(self.iopub_socket, 'stream', {'name': 'stderr', 'text': exceptions})
+                return 'error'                
+            case self.ProcessedHTML(_, html):
+                self.send_response(self.iopub_socket, 'display_data', {'data': {'text/html': html}, 'metadata': {}})
+                return 'ok'                
+            case self.ProcessedResult(_, result):
+                self.send_response(self.iopub_socket, 'stream', {'name': 'stdout', 'text': result})
+                return 'ok'
+        
+        return 'error' # Should be unreachable
 
     _quit_regex   = re.compile(r'^\s*:q\w*\s*$', re.MULTILINE)
     _prompt_regex = re.compile(r'^\s*:set\s+prompt(?!-function)', re.MULTILINE)
@@ -236,6 +237,7 @@ class IGHCi(Kernel):
             output = self.ghci.run_command(code)
             return self._send_output(output)
         except KeyboardInterrupt:
+            # TODO: handling warnings after interruption?
             self.ghci.child.sendintr()
             
             # Wait for the prompt after interruption
@@ -253,10 +255,7 @@ class IGHCi(Kernel):
         except Exception as e:
             exception_formatted = str(e)
             self.log.error(exception_formatted)
-            self.send_response(self.iopub_socket, 
-                               'stream', 
-                               {'name': "stderr",
-                                'text': exception_formatted})
+            self.send_response(self.iopub_socket, 'stream', {'name': "stderr", 'text': exception_formatted})
             return 'error'
     
     def do_execute(self, code, silent, 
