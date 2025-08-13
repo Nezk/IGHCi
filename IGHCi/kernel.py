@@ -57,25 +57,6 @@ class IGHCi(Kernel):
         ]
         
         return list(chain.from_iterable(processed))
-
-    @dataclass
-    class ProcessedError:
-        errors: str
-
-    @dataclass
-    class ProcessedException:
-        warnings: str | None
-        exception: str
-
-    @dataclass
-    class ProcessedHTML:
-        warnings: str | None
-        html: str
-
-    @dataclass
-    class ProcessedResult:
-        warnings: str | None
-        result: str
     
     _error_regex = re.compile(r'(?xs)'
                               r'^\s*\{'
@@ -127,7 +108,7 @@ class IGHCi(Kernel):
         
         if errors := match_lines(self._error_regex):
             processed_errors = process_stderr(errors)
-            return self.ProcessedError(errors = processed_errors)
+            return ("errors", processed_errors) 
     
         if warnings := match_lines(self._warning_regex):
             processed_warnings = process_stderr(warnings)
@@ -141,14 +122,14 @@ class IGHCi(Kernel):
         if any(self._exception_regex.match(line) for line in result_lines):
             # Adding newlines for separating exception from previous warnings
             processed_exception = f"\n\n{result}" if warnings else result
-            return self.ProcessedException(warnings = processed_warnings, exception = processed_exception)
+            return ("exceptions", processed_exception, processed_warnings)
 
         # TODO: Split a single output containing multiple `<html>` wrappers into separate messages.
         if result.startswith('<html>') and result.endswith('</html>'):
             processed_html = result[len('<html>'):-len('</html>')].strip()
-            return self.ProcessedHTML(warnings = processed_warnings, html = processed_html)
+            return ("html", processed_html, processed_warnings)
             
-        return self.ProcessedResult(warnings = processed_warnings, result = result)
+        return ("result", result, processed_warnings)
 
     def _send_output(self, output):
 
@@ -157,22 +138,22 @@ class IGHCi(Kernel):
 
         processed_output = self._process_output(output)
 
-        # So unpleasant…
-        if not isinstance(processed_output, self.ProcessedError):
-            if warnings := processed_output.warnings:
+        # I used dataclasses previously but didn't like it
+        if not processed_output[0] == "errors":
+            if warnings := processed_output[-1]:
                 self.send_response(self.iopub_socket, 'stream', {'name': 'stderr', 'text': warnings})
         
         match processed_output:
-            case self.ProcessedError(errors):
+            case ("errors", errors):
                 self.send_response(self.iopub_socket, 'stream', {'name': 'stderr', 'text': errors})
                 return 'error'
-            case self.ProcessedException(_, exceptions):
+            case ("exceptions", exceptions, _):
                 self.send_response(self.iopub_socket, 'stream', {'name': 'stderr', 'text': exceptions})
                 return 'error'                
-            case self.ProcessedHTML(_, html):
+            case ("html", html, _):
                 self.send_response(self.iopub_socket, 'display_data', {'data': {'text/html': html}, 'metadata': {}})
                 return 'ok'                
-            case self.ProcessedResult(_, result):
+            case ("result", result, _):
                 self.send_response(self.iopub_socket, 'stream', {'name': 'stdout', 'text': result})
                 return 'ok'
         
@@ -195,10 +176,7 @@ class IGHCi(Kernel):
 
         if matchings := [message for regex, message in rules if re.findall(regex, code)]:
             matching_msg = "\n".join(matchings)
-            self.send_response(self.iopub_socket, 
-                                'stream', 
-                                {'name': "stderr",
-                                 'text': matching_msg})
+            self.send_response(self.iopub_socket, 'stream', {'name': "stderr", 'text': matching_msg})
             return 'error'
         return None
 
@@ -246,10 +224,7 @@ class IGHCi(Kernel):
 
             if output_intr.strip():
                 output_intr_formatted = f"Interrupted:\n{output_intr}"
-                self.send_response(self.iopub_socket, 'stream', {
-                    'name': "stderr",
-                    'text': output_intr_formatted
-                })
+                self.send_response(self.iopub_socket, 'stream', {'name': "stderr", 'text': output_intr_formatted})
             
             return 'abort'
         except Exception as e:
