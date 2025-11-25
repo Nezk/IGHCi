@@ -26,6 +26,8 @@ class IGHCi(Kernel):
         super().__init__(**kwargs)
         # Create a temporary directory for storing module files for this kernel session
         self._module_path = tempfile.mkdtemp()
+        # Flag to ensure we only delete directories we created automatically
+        self._is_temp_dir = True
         self._start_ghci()
 
     def _start_ghci(self):
@@ -184,6 +186,48 @@ class IGHCi(Kernel):
         flags=re.DOTALL | re.MULTILINE
     )
 
+    _cd_regex = re.compile(r'^\s*:cd\s+(.+?)\s*$', flags=re.MULTILINE)
+
+    def _change_directory(self, match):
+        path_raw = match.group(1).strip()
+        new_path = os.path.abspath(os.path.expanduser(path_raw))
+
+        if self._is_temp_dir and os.path.exists(self._module_path):
+            try:
+                shutil.rmtree(self._module_path)
+            except Exception as e:
+                self.log.warn(f"Failed to cleanup temp dir {self._module_path}: {e}")
+
+        if not os.path.exists(new_path):
+            try:
+                os.makedirs(new_path, exist_ok=True)
+            except Exception as e:
+                error_msg = f"Error creating directory {new_path}: {str(e)}"
+                self.send_response(self.iopub_socket, 'stream', {'name': 'stderr', 'text': error_msg})
+                return 'error'
+
+        self._module_path = new_path
+        self._is_temp_dir = False
+
+        # Quoting the path to handle spaces correctly in GHCi
+        quoted_path = f'"{new_path}"'
+
+        try:
+            self.ghci.run_command(f':cd {quoted_path}')
+            self.ghci.run_command(f':set -i{quoted_path}')
+
+            self.send_response(self.iopub_socket, 'stream', {
+                'name': 'stdout',
+                'text': f"Working directory changed to: {new_path}"
+            })
+            return 'ok'
+        except Exception as e:
+            self.send_response(self.iopub_socket, 'stream', {
+                'name': 'stderr',
+                'text': f"Error syncing GHCi path: {str(e)}"
+            })
+            return 'error'
+
     def _load_module(self, module_match, code):
         path_raw, module_name = module_match.groups()
 
@@ -209,7 +253,7 @@ class IGHCi(Kernel):
             })
             return 'error'
 
-    def _execute_code(self, code): 
+    def _execute_code(self, code):
         try:
             output = self.ghci.run_command(code)
             return self._send_output(output)
@@ -242,6 +286,9 @@ class IGHCi(Kernel):
         if early_status := self._early_check(code):
             return return_response(early_status)
 
+        if cd_match := self._cd_regex.search(code):
+            return return_response(self._change_directory(cd_match))
+
         if module_match := self._module_regex.search(code):
             return return_response(self._load_module(module_match, code))
 
@@ -257,8 +304,9 @@ class IGHCi(Kernel):
 
     def do_shutdown(self, restart):
         self.ghci.child.close()
-        # Clean up the temporary directory on shutdown
-        shutil.rmtree(self._module_path)
+        # Clean up the temporary directory on shutdown ONLY if it is still a temp dir
+        if self._is_temp_dir and os.path.exists(self._module_path):
+            shutil.rmtree(self._module_path)
         return {"status": "ok", "restart": restart}
 
     # I don't think there is any need in greek alphabet
