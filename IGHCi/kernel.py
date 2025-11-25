@@ -10,7 +10,7 @@ from ipykernel.kernelbase import Kernel
 from pexpect.replwrap     import REPLWrapper
 
 class IGHCi(Kernel):
-    implementation         = 'Haskell'
+    implementation         = 'IGHCi'
     implementation_version = '0.0.2'
     language               = 'haskell'
 
